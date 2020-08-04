@@ -1,0 +1,20 @@
+[package]
+name = "mutexpect"
+version = "0.2.0"
+authors = ["Jörn Bethune <joern@localhost>"]
+edition = "2018"
+readme = "README.md"
+repository = "https://github.com/jbethune/mutexpect/"
+license = "MIT"
+keywords = [ "mutation", "genetics", "statistical model" ]
+description = "Utility functions for determining potential point mutations in a genetic sequence and their statisical probability"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tabfile = "0.2"
+twobit = "0.1"
+pattern_partition_prediction = "0.1"
+thiserror = "1.0"
+serde_repr = "0.1"
+serde = "1.0"
