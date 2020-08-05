@@ -6,7 +6,7 @@ edition = "2018"
 readme = "README.md"
 repository = "https://github.com/jbethune/mutexpect/"
 license = "MIT"
-keywords = [ "mutation", "genetics", "statistical model" ]
+keywords = [ "mutation", "genetics", "statistical-model" ]
 description = "Utility functions for determining potential point mutations in a genetic sequence and their statisical probability"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
