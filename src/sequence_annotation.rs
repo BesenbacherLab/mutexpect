@@ -173,7 +173,12 @@ pub fn read_sequence_annotations_from_file<P: AsRef<Path>>(
             if tokens[NAME_IDX] != id {
                 continue;
             }
+        } else {
+            if tokens[NAME_IDX] == "gene_name" {
+                continue //ignore header line
+            }
         }
+
         let exons = Interval::parse_many(tokens[EXONS_IDX], ';')
             .map_err(|e| FileError::parse(Some(&path), e))?;
         let cds_intervals = Interval::parse_many(tokens[CDS_IDX], ';')
