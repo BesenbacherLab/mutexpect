@@ -13,13 +13,13 @@ use std::fmt;
 
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
-use pattern_partition_prediction::PaPaPred;
+use pattern_partition_prediction::{PaPaPred, PaPaPredIndel};
 use twobit::TwoBitFile;
 
 pub use crate::cds::{Phase, CDS};
 use crate::error::{MutexpectError, ParseError};
 pub use crate::interval::Interval;
-use crate::mutation::PointMutation;
+use crate::mutation::{PointMutation, Indel};
 pub use crate::point_mutation_classifier::PointMutationClassifier;
 use crate::seq_window_slider::SeqWindowSlider;
 pub use crate::sequence_annotation::{read_sequence_annotations_from_file, SeqAnnotation, Strand};
@@ -27,11 +27,12 @@ pub use crate::sequence_annotation::{read_sequence_annotations_from_file, SeqAnn
 pub fn possible_mutations(
     seq: &str,
     seq_annotation: &SeqAnnotation,
-    seq_context_mutation_probabilities: &PaPaPred,
+    point_mutation_probabilities: &PaPaPred,
+    indel_probabilities: &Option<PaPaPredIndel>,
     drop_nan: bool,
 ) -> Result<Vec<MutationEvent>, MutexpectError> {
     let mut result = Vec::new();
-    let seq_flanking_length = seq_context_mutation_probabilities.kmer_size() / 2; // this should round down
+    let seq_flanking_length = point_mutation_probabilities.kmer_size() / 2; // this should round down
     let window_length = 1 + 2 * seq_flanking_length;
     let sequence_genomic_start_position = seq_annotation.range.start;
     let classifier = PointMutationClassifier::new(&seq_annotation, seq_flanking_length);
@@ -51,15 +52,16 @@ pub fn possible_mutations(
         let seq_window_vec: Vec<char> = seq_window.chars().collect();
         let ref_base: Base = seq_window_vec[seq_flanking_length].into();
 
-        let mutation_probability = seq_context_mutation_probabilities
+        let mutation_probability = point_mutation_probabilities
             .rates(seq_window)
             .map_err(|e| {
                 error::SequenceError::new(
                     seq_annotation.name.clone(),
-                    "Bad sequence",
+                    "Bad sequence (for point mutation)",
                     Some(Box::new(e)),
                 )
             })?;
+
 
         let overlapping_intron = {
             loop {
@@ -126,6 +128,29 @@ pub fn possible_mutations(
                 });
             }
         }
+
+        // determine indels
+        if let Some(p) = indel_probabilities {
+            // we don't care about intronic indels because most of them don't matter
+            if overlapping_cds.is_some() && overlapping_cds.expect("some").range.start < genomic_position { // needs to be greater, because of anchor base
+                let rates = p.rates(&seq_window[0 .. seq_window.len() - 1] ) // 01[2]34 -> 01[]23
+                .map_err(|e| {
+                    error::SequenceError::new(
+                        seq_annotation.name.clone(),
+                        "Bad sequence (for indel split)",
+                        Some(Box::new(e)),
+                    )
+                })?;
+                result.push(MutationEvent{
+                    mutation_type: MutationType::InFrameIndel,
+                    probability: rates.inframe,
+                });
+                result.push(MutationEvent{
+                    mutation_type: MutationType::FrameshiftIndel,
+                    probability: rates.outframe,
+                });
+            }
+        }
     }
     Ok(result)
 }
@@ -142,6 +167,7 @@ pub fn expected_number_of_mutations(
 
 pub fn observed_number_of_mutations(
     mutations: &[PointMutation], // point mutations within the seq_annotation (the gene/transcript)
+    indels: &[Indel],
     seq_annotation: &SeqAnnotation, //only one annotation for the current gene/transcript
     twobit_ref_seq: &TwoBitFile,
 ) -> Result<HashMap<MutationType, usize>, MutexpectError> {
@@ -176,6 +202,30 @@ pub fn observed_number_of_mutations(
         } // else: just recycle Unknown 3 times
         result.entry(mut_type).and_modify(|c| *c += 1).or_insert(1);
     }
+
+    for indel in indels {
+        let mut mut_type = MutationType::Unknown;
+        for intron in seq_annotation.get_introns() {
+            if intron.contains(indel.position) {
+                mut_type = MutationType::Intronic;
+                break;
+            }
+        }
+
+        if mut_type == MutationType::Unknown { // it's not intronic. It might be a frameshift
+            for cds in &seq_annotation.coding_sequences {
+                if cds.range.contains(indel.position) {
+                    if indel.is_inframe() {
+                        mut_type = MutationType::InFrameIndel
+                    } else {
+                        mut_type = MutationType::FrameshiftIndel;
+                    }
+                    break
+                }
+            }
+        }
+        result.entry(mut_type).and_modify(|c| *c += 1).or_insert(1);
+    }
     Ok(result)
 }
 
@@ -189,6 +239,9 @@ pub enum MutationType {
     StopLoss = 4,
     StartCodon = 5,
     SpliceSite = 6,
+    Intronic = 7,
+    InFrameIndel = 8,
+    FrameshiftIndel = 9,
 }
 
 impl MutationType {
@@ -201,6 +254,9 @@ impl MutationType {
             Self::StopLoss => "stop_loss",
             Self::StartCodon => "start_codon",
             Self::SpliceSite => "splice_site",
+            Self::Intronic => "intronic",
+            Self::InFrameIndel => "in_frame_indel",
+            Self::FrameshiftIndel => "frameshift_index",
         }
     }
 
@@ -223,6 +279,9 @@ impl fmt::Display for MutationType {
             Self::StopLoss => "StopLoss",
             Self::StartCodon => "StartCodon",
             Self::SpliceSite => "SpliceSite",
+            Self::Intronic => "Intronic",
+            Self::InFrameIndel => "InFrameIndel",
+            Self::FrameshiftIndel => "FrameshiftIndel",
         };
         write!(f, "{}", string)
     }
@@ -239,6 +298,9 @@ impl TryFrom<&str> for MutationType {
             "stoploss" | "stop_loss" => Self::StopLoss,
             "startcodon" | "start_codon" => Self::StartCodon,
             "splicesite" | "splice_site" => Self::SpliceSite,
+            "intronic" => Self::Intronic,
+            "in_frame" | "in_frame_indel" | "inframe" => Self::InFrameIndel,
+            "out_frame" | "out_frame_outdel" | "outframe" => Self::FrameshiftIndel,
             _ => {
                 return Err(ParseError::somewhere(
                     "name of mutation type",
@@ -259,6 +321,9 @@ impl From<u8> for MutationType {
             4 => Self::StopLoss,
             5 => Self::StartCodon,
             6 => Self::SpliceSite,
+            7 => Self::Intronic,
+            8 => Self::InFrameIndel,
+            9 => Self::FrameshiftIndel,
             _ => Self::Unknown,
         }
     }
@@ -272,12 +337,11 @@ impl std::iter::Iterator for MutationTypeIter {
     type Item = MutationType;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index > 6 {
+        let mut_type: MutationType = self.index.into();
+        if mut_type == MutationType::Unknown && self.index != 0 {
             None
         } else {
-            let result = self.index.into();
-            self.index += 1;
-            Some(result)
+            Some(mut_type)
         }
     }
 }

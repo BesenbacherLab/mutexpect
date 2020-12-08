@@ -1,6 +1,6 @@
 [package]
 name = "mutexpect"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Jörn Bethune <joern@localhost>"]
 edition = "2018"
 readme = "README.md"
@@ -14,7 +14,7 @@ description = "Utility functions for determining potential point mutations in a 
 [dependencies]
 tabfile = "0.2"
 twobit = "0.1"
-pattern_partition_prediction = "0.1"
+pattern_partition_prediction = { version = "0.1", path = "../pattern_partition_prediction/" }
 thiserror = "1.0"
 serde_repr = "0.1"
 serde = "1.0"

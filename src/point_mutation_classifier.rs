@@ -51,10 +51,12 @@ impl<'a> PointMutationClassifier<'a> {
         seq: &[char],
         intron: &Option<Interval>,
     ) -> MutationType {
-        if intron.is_some()
-            && self.disrupts_cannonical_splice_site(genomic_position, seq, &intron.unwrap())
-        {
-            MutationType::SpliceSite
+        if intron.is_some() {
+            if self.disrupts_cannonical_splice_site(genomic_position, seq, &intron.expect("is some")) {
+                MutationType::SpliceSite
+            } else {
+                MutationType::Intronic
+            }
         } else if self.disrupts_start_codon(genomic_position, seq) {
             MutationType::StartCodon
         } else {
