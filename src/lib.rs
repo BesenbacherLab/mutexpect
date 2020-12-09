@@ -265,6 +265,7 @@ impl MutationType {
     }
 }
 
+
 impl fmt::Display for MutationType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // I get a stack overflow if I simply do self.to_string(). So I'll implement the string
@@ -338,7 +339,8 @@ impl std::iter::Iterator for MutationTypeIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut_type: MutationType = self.index.into();
-        if mut_type == MutationType::Unknown && self.index != 0 {
+        self.index += 1;
+        if mut_type == MutationType::Unknown && self.index != 1 { // 1, because we already incremented
             None
         } else {
             Some(mut_type)
@@ -405,5 +407,32 @@ impl From<char> for Base {
             'N' | 'n' => Self::N,
             _ => panic!("Bad nucleotide: {}", c),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mutation_type_iterator() {
+        let mutation_types = vec![
+            MutationType::Unknown,
+            MutationType::Synonymous,
+            MutationType::Missense,
+            MutationType::Nonsense,
+            MutationType::StopLoss,
+            MutationType::StartCodon,
+            MutationType::SpliceSite,
+            MutationType::Intronic,
+            MutationType::InFrameIndel,
+            MutationType::FrameshiftIndel,
+        ];
+        let mut iter = MutationType::iter();
+        for mut_type in mutation_types {
+eprintln!("{}", mut_type); //Unknown TODO Baustelle (and don't forget to fmt afterwards)
+            assert_eq!(mut_type, iter.next().unwrap());
+        }
+        assert!(iter.next().is_none());
     }
 }
