@@ -256,7 +256,7 @@ impl MutationType {
             Self::SpliceSite => "splice_site",
             Self::Intronic => "intronic",
             Self::InFrameIndel => "in_frame_indel",
-            Self::FrameshiftIndel => "frameshift_index",
+            Self::FrameshiftIndel => "frameshift_indel",
         }
     }
 
@@ -430,7 +430,6 @@ mod tests {
         ];
         let mut iter = MutationType::iter();
         for mut_type in mutation_types {
-eprintln!("{}", mut_type); //Unknown TODO Baustelle (and don't forget to fmt afterwards)
             assert_eq!(mut_type, iter.next().unwrap());
         }
         assert!(iter.next().is_none());
