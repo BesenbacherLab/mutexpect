@@ -363,7 +363,7 @@ impl MutationEvent {
     }
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Base {
     A,
     C,
@@ -403,7 +403,7 @@ impl From<char> for Base {
             'A' | 'a' => Self::A,
             'C' | 'c' => Self::C,
             'G' | 'g' => Self::G,
-            'T' | 't' => Self::G,
+            'T' | 't' => Self::T,
             'N' | 'n' => Self::N,
             _ => panic!("Bad nucleotide: {}", c),
         }
