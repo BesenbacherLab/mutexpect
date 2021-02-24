@@ -1,6 +1,6 @@
 [package]
 name = "mutexpect"
-version = "0.2.5"
+version = "0.2.6"
 authors = ["Jörn Bethune <joern@localhost>"]
 edition = "2018"
 readme = "README.md"
