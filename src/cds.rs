@@ -3,7 +3,7 @@ use std::convert::{From, TryFrom};
 use crate::error::ParseError;
 use crate::interval::Interval;
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Eq, Ord, PartialOrd)]
 pub struct CDS {
     pub range: Interval,
     pub phase: Phase,
@@ -15,7 +15,7 @@ impl CDS {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
 pub enum Phase {
     Zero,
     One,

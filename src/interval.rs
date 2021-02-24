@@ -7,7 +7,7 @@ use crate::error::ParseError;
 ///
 /// By convention, start and stop are zero-based.
 /// The start position is always inclusive and the stop position is always exclusive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 pub struct Interval {
     pub start: usize, // inclusive
     pub stop: usize,  // exclusive
