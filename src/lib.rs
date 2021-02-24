@@ -112,20 +112,20 @@ pub fn possible_mutations(
                     continue;
                 }
                 if let Some(cds) = overlapping_cds {
-                    if mutation_type == MutationType::Unknown {
-                        // if we are in a coding region we need to do additional classifications
-                        mutation_type = classifier.classify_coding_mutation(
-                            genomic_position,
-                            &seq_window_vec,
-                            other_nuc.name(),
-                            &cds,
-                        )
-                    }
+                    // if we are in a coding region we need to do additional classifications
+                    mutation_type = classifier.classify_coding_mutation(
+                        genomic_position,
+                        &seq_window_vec,
+                        other_nuc.name(),
+                        &cds,
+                    )
                 } // else just recycle the mutation class
                 result.push(MutationEvent {
                     mutation_type,
                     probability,
                 });
+                // For testing. Would be nice to be able to print this based on a cli argument
+                // println!("{} {:?} {:?} {:?}", genomic_position +1 , ref_base, other_nuc, mutation_type)
             }
         }
 
@@ -390,7 +390,7 @@ impl From<u8> for Base {
             65 | 97 => Self::A,
             67 | 99 => Self::C,
             71 | 103 => Self::G,
-            84 | 116 => Self::G,
+            84 | 116 => Self::T,
             78 | 110 => Self::N,
             _ => panic!("Bad nucleotide: {}", byte),
         }
