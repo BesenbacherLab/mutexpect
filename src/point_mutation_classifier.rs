@@ -192,6 +192,29 @@ impl<'a> PointMutationClassifier<'a> {
         let phase = cds.phase as usize;
         let middle_index = self.middle_index;
 
+
+        // We ignore codons that are not contained in a single exon but are split 
+        // between two.       
+        // If we want to handle split codons better we should skip this match statement.
+        // Better solution would be to carry unused nucleotides from previous cds in cds struct
+        match self.gene_info.strand {
+            Strand::Plus => {
+                if genomic_position < cds.range.start + cds.phase as usize {
+                    return MutationType::Unknown
+                } else if genomic_position >= cds.range.stop - ((cds.range.stop - (cds.range.start + cds.phase as usize))%3) {
+                    return MutationType::Unknown
+                }
+            }
+            Strand::Minus => {
+                if genomic_position < cds.range.start + ((cds.range.stop - (cds.range.start + cds.phase as usize))%3) {
+                    return MutationType::Unknown
+                } else if genomic_position >= cds.range.stop - cds.phase as usize {
+                    return MutationType::Unknown
+                }
+            }
+        }
+
+
         let (old_codon, relative_frame) = match self.gene_info.strand {
             Strand::Plus => {
                 // easy mode
@@ -291,7 +314,7 @@ impl<'a> PointMutationClassifier<'a> {
         assert_eq!(new_codon.len(), 3);
         let old_aa = translate(&old_codon).unwrap();
         let new_aa = translate(&new_codon).unwrap();
-
+        //println!("{:?} {:?} {:?} {:?}", old_codon, new_codon, old_aa, new_aa);
         if old_aa == new_aa {
             MutationType::Synonymous
         } else if old_aa == AminoAcid::Stop {
