@@ -30,6 +30,8 @@ pub fn possible_mutations(
     point_mutation_probabilities: &PaPaPred,
     indel_probabilities: &Option<PaPaPredIndel>,
     drop_nan: bool,
+    include_intronic : bool,
+    include_unknown : bool,
 ) -> Result<Vec<MutationEvent>, MutexpectError> {
     let mut result = Vec::new();
     let seq_flanking_length = point_mutation_probabilities.kmer_size() / 2; // this should round down
@@ -120,12 +122,18 @@ pub fn possible_mutations(
                         &cds,
                     )
                 } // else just recycle the mutation class
+                if mutation_type == MutationType::Intronic && !include_intronic {
+                    continue;
+                }
+                if mutation_type == MutationType::Unknown && !include_unknown {
+                    continue;
+                }
                 result.push(MutationEvent {
                     mutation_type,
                     probability,
                 });
                 // For testing. Would be nice to be able to print this based on a cli argument
-                // println!("{} {:?} {:?} {:?}", genomic_position +1 , ref_base, other_nuc, mutation_type)
+                //println!("{} {:?} {:?} {:?}", genomic_position +1 , ref_base, other_nuc, mutation_type)
             }
         }
 
