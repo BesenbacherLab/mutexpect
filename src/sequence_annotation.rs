@@ -87,6 +87,36 @@ impl SeqAnnotation {
         result
     }
 
+    pub fn get_end_minus50(&self) -> usize {
+        let mut remain  = 50;
+        match self.strand {
+            Strand::Plus => {
+                for cds in self.coding_sequences.iter().rev() {
+                    //println!("plus {:?}", cds.range.stop - cds.range.start);
+                    if cds.range.stop - cds.range.start > remain {
+                        return cds.range.stop - remain;
+                        //println!("end: {:?}", cds.range.stop - remain)
+                    } else {
+                        remain = remain - (cds.range.stop - cds.range.start)
+                    }
+                }
+                self.range.start
+            }
+            Strand::Minus => {
+                for cds in self.coding_sequences.iter() {
+                    //println!("minus {:?}", cds.range.stop - cds.range.start);
+                    if cds.range.stop - cds.range.start > remain {
+                        return cds.range.start + remain;
+                        //println!("end: {:?}", cds.range.start + remain)
+                    } else {
+                        remain = remain - (cds.range.stop - cds.range.start)
+                    }
+                }
+                self.range.stop
+            }
+        }   
+    }
+
     pub fn find_exon(&self, genomic_position: usize) -> Option<Interval> {
         for exon in &self.exons {
             if exon.contains(genomic_position) {

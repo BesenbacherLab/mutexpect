@@ -32,6 +32,7 @@ pub fn possible_mutations(
     drop_nan: bool,
     include_intronic : bool,
     include_unknown : bool,
+    filter_plof : bool,
 ) -> Result<Vec<MutationEvent>, MutexpectError> {
     let mut result = Vec::new();
     let seq_flanking_length = point_mutation_probabilities.kmer_size() / 2; // this should round down
@@ -44,7 +45,6 @@ pub fn possible_mutations(
 
     let mut current_intron: Option<Interval> = introns_iter.next().copied();
     let mut current_cds: Option<CDS> = cds_iter.next().copied();
-
     //for ( i, seq_window ) in seq.as_bytes().windows( window_length ).enumerate() {
     for (i, seq_window) in SeqWindowSlider::new(seq, window_length)
         .into_iter()
@@ -120,6 +120,7 @@ pub fn possible_mutations(
                         &seq_window_vec,
                         other_nuc.name(),
                         &cds,
+                        filter_plof,
                     )
                 } // else just recycle the mutation class
                 if mutation_type == MutationType::Intronic && !include_intronic {
@@ -153,6 +154,20 @@ pub fn possible_mutations(
                     mutation_type: MutationType::InFrameIndel,
                     probability: rates.inframe,
                 });
+                if filter_plof {
+                    match seq_annotation.strand {
+                        Strand::Plus => {
+                            if genomic_position >= seq_annotation.get_end_minus50() {
+                                continue;
+                            }  
+                        },      
+                        Strand::Minus => {
+                            if genomic_position <= seq_annotation.get_end_minus50() {
+                                continue;
+                            } 
+                        },
+                    }
+                }
                 result.push(MutationEvent{
                     mutation_type: MutationType::FrameshiftIndel,
                     probability: rates.outframe,
@@ -178,6 +193,7 @@ pub fn observed_number_of_mutations(
     indels: &[Indel],
     seq_annotation: &SeqAnnotation, //only one annotation for the current gene/transcript
     twobit_ref_seq: &TwoBitFile,
+    filter_plof : bool,
 ) -> Result<HashMap<MutationType, usize>, MutexpectError> {
     let mut result = HashMap::new();
     let dna = twobit_ref_seq; // alias
@@ -205,6 +221,7 @@ pub fn observed_number_of_mutations(
                     &nucleotides,
                     mutation.alternative,
                     &cds,
+                    filter_plof,
                 );
             } // else: not coding
         } // else: just recycle Unknown 3 times
@@ -227,6 +244,20 @@ pub fn observed_number_of_mutations(
                         mut_type = MutationType::InFrameIndel
                     } else {
                         mut_type = MutationType::FrameshiftIndel;
+                        if filter_plof {
+                            match seq_annotation.strand {
+                                Strand::Plus => {
+                                    if indel.position >= seq_annotation.get_end_minus50() {
+                                        mut_type = MutationType::Unknown
+                                    }  
+                                },      
+                                Strand::Minus => {
+                                    if indel.position <= seq_annotation.get_end_minus50() {
+                                        mut_type = MutationType::Unknown
+                                    } 
+                                },
+                            }
+                        }
                     }
                     break
                 }

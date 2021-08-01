@@ -188,6 +188,7 @@ impl<'a> PointMutationClassifier<'a> {
         seq: &[char],
         other_nucleotide: char,
         cds: &CDS,
+        filter_plof: bool,
     ) -> MutationType {
         let phase = cds.phase as usize;
         let middle_index = self.middle_index;
@@ -314,13 +315,34 @@ impl<'a> PointMutationClassifier<'a> {
         assert_eq!(new_codon.len(), 3);
         let old_aa = translate(&old_codon).unwrap();
         let new_aa = translate(&new_codon).unwrap();
+        //let cds_end self.gene_info.coding_sequences.last().unwrap().range.stop
+        //println!("{:?} {:?}", self.gene_info.coding_sequences, self.gene_info.coding_sequences.last().unwrap().range.stop);
         //println!("{:?} {:?} {:?} {:?}", old_codon, new_codon, old_aa, new_aa);
         if old_aa == new_aa {
             MutationType::Synonymous
         } else if old_aa == AminoAcid::Stop {
             MutationType::StopLoss
         } else if new_aa == AminoAcid::Stop {
-            MutationType::Nonsense
+            if filter_plof {
+                match self.gene_info.strand {
+                    Strand::Plus => {
+                        if genomic_position >= self.gene_info.get_end_minus50() {
+                            MutationType::Unknown
+                        } else {
+                            MutationType::Nonsense
+                        }   
+                    },      
+                    Strand::Minus => {
+                        if genomic_position <= self.gene_info.get_end_minus50() {
+                            MutationType::Unknown
+                        } else {
+                            MutationType::Nonsense
+                        }
+                    },
+                }
+            } else {
+                MutationType::Nonsense
+            }
         } else {
             MutationType::Missense
         }
