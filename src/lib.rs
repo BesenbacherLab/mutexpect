@@ -24,6 +24,169 @@ pub use crate::point_mutation_classifier::PointMutationClassifier;
 use crate::seq_window_slider::SeqWindowSlider;
 pub use crate::sequence_annotation::{read_sequence_annotations_from_file, SeqAnnotation, Strand};
 
+/// What a possible mutation changes at a position.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Alteration {
+    /// A point mutation to this base.
+    Point(Base),
+    /// An in-frame insertion or deletion (anchored at this position).
+    InFrameIndel,
+    /// A frameshift insertion or deletion (anchored at this position).
+    FrameshiftIndel,
+}
+
+/// A possible mutation and its class, see [`for_each_possible_mutation`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PossibleMutation {
+    pub alteration: Alteration,
+    pub mutation_type: MutationType,
+}
+
+/// One position of an annotated sequence and the mutations possible there.
+#[derive(Debug)]
+pub struct Site<'a> {
+    /// 0-based genomic position.
+    pub genomic_position: usize,
+    pub ref_base: Base,
+    /// The `2 * seq_flanking_length + 1` bases centred on the position.
+    pub seq_window: &'a str,
+    /// Point mutations (to each other base, in A, C, G, T order) that pass the
+    /// filters, followed by indels (only inside coding sequences).
+    pub mutations: &'a [PossibleMutation],
+}
+
+/// Call `f` for every position of `seq_annotation` with the mutations that are
+/// possible there and their classes.
+///
+/// `seq` is the genomic sequence of the annotated region plus
+/// `seq_flanking_length` bases on each side. `f` is called for every position,
+/// also when no mutation passes the filters (then `mutations` is empty).
+/// Intronic and unknown point mutations are only included if requested. With
+/// `filter_plof`, frameshift indels in the last 50 bases of the coding sequence
+/// are left out (and coding point mutations classified accordingly).
+pub fn for_each_possible_mutation<E>(
+    seq: &str,
+    seq_annotation: &SeqAnnotation,
+    seq_flanking_length: usize,
+    include_intronic: bool,
+    include_unknown: bool,
+    filter_plof: bool,
+    mut f: impl FnMut(&Site) -> Result<(), E>,
+) -> Result<(), E> {
+    let window_length = 1 + 2 * seq_flanking_length;
+    let sequence_genomic_start_position = seq_annotation.range.start;
+    let classifier = PointMutationClassifier::new(&seq_annotation, seq_flanking_length);
+    let introns = seq_annotation.get_introns();
+    let mut introns_iter = introns.iter();
+    let mut cds_iter = seq_annotation.coding_sequences.iter();
+
+    let mut current_intron: Option<Interval> = introns_iter.next().copied();
+    let mut current_cds: Option<CDS> = cds_iter.next().copied();
+    let mut mutations = Vec::with_capacity(5);
+    for (i, seq_window) in SeqWindowSlider::new(seq, window_length)
+        .into_iter()
+        .enumerate()
+    {
+        let genomic_position = sequence_genomic_start_position + i;
+        let seq_window_vec: Vec<char> = seq_window.chars().collect();
+        let ref_base: Base = seq_window_vec[seq_flanking_length].into();
+
+        let overlapping_intron = {
+            loop {
+                if let Some(intron) = current_intron {
+                    if genomic_position < intron.start {
+                        break None; // still has some way to go to the next intron
+                    } else if genomic_position < intron.stop {
+                        break Some(intron); // yay, we are inside the current intron!
+                    } else {
+                        current_intron = introns_iter.next().copied();
+                    }
+                } else {
+                    break None; // iterator is exhausted
+                }
+            }
+        };
+
+        let overlapping_cds = {
+            loop {
+                if let Some(cds) = &current_cds {
+                    if genomic_position < cds.range.start {
+                        break None;
+                    } else if genomic_position < cds.range.stop {
+                        break Some(cds); // yay, we are inside the current cds!
+                    } else {
+                        current_cds = cds_iter.next().copied();
+                    }
+                } else {
+                    break None; // iterator is exhausted
+                }
+            }
+        };
+
+        let mut mutation_type = classifier.classify_by_position(
+            genomic_position,
+            &seq_window_vec,
+            &overlapping_intron, // may be none
+        );
+
+        mutations.clear();
+        for other_nuc in &[Base::A, Base::C, Base::G, Base::T] {
+            if *other_nuc == ref_base {
+                continue;
+            }
+            if let Some(cds) = overlapping_cds {
+                // if we are in a coding region we need to do additional classifications
+                mutation_type = classifier.classify_coding_mutation(
+                    genomic_position,
+                    &seq_window_vec,
+                    other_nuc.name(),
+                    &cds,
+                    filter_plof,
+                )
+            } // else just recycle the mutation class
+            if mutation_type == MutationType::Intronic && !include_intronic {
+                continue;
+            }
+            if mutation_type == MutationType::Unknown && !include_unknown {
+                continue;
+            }
+            mutations.push(PossibleMutation {
+                alteration: Alteration::Point(*other_nuc),
+                mutation_type,
+            });
+        }
+
+        // indels: we don't care about intronic indels because most of them don't matter
+        if let Some(cds) = overlapping_cds {
+            if cds.range.start < genomic_position {
+                // needs to be greater, because of anchor base
+                mutations.push(PossibleMutation {
+                    alteration: Alteration::InFrameIndel,
+                    mutation_type: MutationType::InFrameIndel,
+                });
+                let in_last_50 = match seq_annotation.strand {
+                    Strand::Plus => genomic_position >= seq_annotation.get_end_minus50(),
+                    Strand::Minus => genomic_position <= seq_annotation.get_end_minus50(),
+                };
+                if !(filter_plof && in_last_50) {
+                    mutations.push(PossibleMutation {
+                        alteration: Alteration::FrameshiftIndel,
+                        mutation_type: MutationType::FrameshiftIndel,
+                    });
+                }
+            }
+        }
+
+        f(&Site {
+            genomic_position,
+            ref_base,
+            seq_window,
+            mutations: &mutations,
+        })?;
+    }
+    Ok(())
+}
+
 pub fn possible_mutations(
     seq: &str,
     seq_annotation: &SeqAnnotation,
@@ -36,263 +199,69 @@ pub fn possible_mutations(
 ) -> Result<Vec<MutationEvent>, MutexpectError> {
     let mut result = Vec::new();
     let seq_flanking_length = point_mutation_probabilities.kmer_size() / 2; // this should round down
-    let window_length = 1 + 2 * seq_flanking_length;
-    let sequence_genomic_start_position = seq_annotation.range.start;
-    let classifier = PointMutationClassifier::new(&seq_annotation, seq_flanking_length);
-    let introns = seq_annotation.get_introns();
-    let mut introns_iter = introns.iter();
-    let mut cds_iter = seq_annotation.coding_sequences.iter();
-
-    let mut current_intron: Option<Interval> = introns_iter.next().copied();
-    let mut current_cds: Option<CDS> = cds_iter.next().copied();
-    //for ( i, seq_window ) in seq.as_bytes().windows( window_length ).enumerate() {
-    for (i, seq_window) in SeqWindowSlider::new(seq, window_length)
-        .into_iter()
-        .enumerate()
-    {
-        let genomic_position = sequence_genomic_start_position + i;
-        let seq_window_vec: Vec<char> = seq_window.chars().collect();
-        let ref_base: Base = seq_window_vec[seq_flanking_length].into();
-
-        let mutation_probability = point_mutation_probabilities
-            .rates(seq_window)
-            .map_err(|e| {
-                error::SequenceError::new(
-                    seq_annotation.name.clone(),
-                    "Bad sequence (for point mutation)",
-                    Some(Box::new(e)),
-                )
-            })?;
-
-
-        let overlapping_intron = {
-            loop {
-                if let Some(intron) = current_intron {
-                    if genomic_position < intron.start {
-                        break None; // still has some way to go to the next intron
-                    } else if genomic_position < intron.stop {
-                        break Some(intron); // yay, we are inside the current intron!
-                    } else {
-                        current_intron = introns_iter.next().copied();
-                    }
-                } else {
-                    break None; // iterator is exhausted
-                }
-            }
-        };
-
-        let overlapping_cds = {
-            loop {
-                if let Some(cds) = &current_cds {
-                    if genomic_position < cds.range.start {
-                        break None;
-                    } else if genomic_position < cds.range.stop {
-                        break Some(cds); // yay, we are inside the current cds!
-                    } else {
-                        current_cds = cds_iter.next().copied();
-                    }
-                } else {
-                    break None; // iterator is exhausted
-                }
-            }
-        };
-
-        let mut mutation_type = classifier.classify_by_position(
-            genomic_position,
-            &seq_window_vec,
-            &overlapping_intron, // may be none
-        );
-
-        for other_nuc in &[Base::A, Base::C, Base::G, Base::T] {
-            if *other_nuc == ref_base {
-                // NOP
-            } else {
-                let probability = mutation_probability.by_name(other_nuc.name());
-                if drop_nan && probability.is_nan() {
-                    // avoid trouble but make it impossible to reconstruct the positions of the point mutations
-                    // but that's not something I'm concerned with at the moment anyway.
-                    continue;
-                }
-                if let Some(cds) = overlapping_cds {
-                    // if we are in a coding region we need to do additional classifications
-                    mutation_type = classifier.classify_coding_mutation(
-                        genomic_position,
-                        &seq_window_vec,
-                        other_nuc.name(),
-                        &cds,
-                        filter_plof,
-                    )
-                } // else just recycle the mutation class
-                if mutation_type == MutationType::Intronic && !include_intronic {
-                    continue;
-                }
-                if mutation_type == MutationType::Unknown && !include_unknown {
-                    continue;
-                }
-                result.push(MutationEvent {
-                    mutation_type,
-                    probability,
-                });
-                // For testing. Would be nice to be able to print this based on a cli argument
-                //println!("{} {:?} {:?} {:?}", genomic_position +1 , ref_base, other_nuc, mutation_type)
-            }
-        }
-
-        // determine indels
-        if let Some(p) = indel_probabilities {
-            // we don't care about intronic indels because most of them don't matter
-            if overlapping_cds.is_some() && overlapping_cds.expect("some").range.start < genomic_position { // needs to be greater, because of anchor base
-                let rates = p.rates(&seq_window[0 .. seq_window.len() - 1] ) // 01[2]34 -> 01[]23
+    for_each_possible_mutation(
+        seq,
+        seq_annotation,
+        seq_flanking_length,
+        include_intronic,
+        include_unknown,
+        filter_plof,
+        |site| -> Result<(), MutexpectError> {
+            let mutation_probability = point_mutation_probabilities
+                .rates(site.seq_window)
                 .map_err(|e| {
                     error::SequenceError::new(
                         seq_annotation.name.clone(),
-                        "Bad sequence (for indel split)",
+                        "Bad sequence (for point mutation)",
                         Some(Box::new(e)),
                     )
                 })?;
-                result.push(MutationEvent{
-                    mutation_type: MutationType::InFrameIndel,
-                    probability: rates.inframe,
-                });
-                if filter_plof {
-                    match seq_annotation.strand {
-                        Strand::Plus => {
-                            if genomic_position >= seq_annotation.get_end_minus50() {
-                                continue;
-                            }  
-                        },      
-                        Strand::Minus => {
-                            if genomic_position <= seq_annotation.get_end_minus50() {
-                                continue;
-                            } 
-                        },
+            let mut indel_rates = None;
+            for m in site.mutations {
+                let probability = match m.alteration {
+                    Alteration::Point(other_nuc) => {
+                        let probability = mutation_probability.by_name(other_nuc.name());
+                        if drop_nan && probability.is_nan() {
+                            // avoid trouble but make it impossible to reconstruct the positions of the point mutations
+                            // but that's not something I'm concerned with at the moment anyway.
+                            continue;
+                        }
+                        probability
                     }
-                }
-                result.push(MutationEvent{
-                    mutation_type: MutationType::FrameshiftIndel,
-                    probability: rates.outframe,
+                    Alteration::InFrameIndel | Alteration::FrameshiftIndel => {
+                        let p = match indel_probabilities {
+                            Some(p) => p,
+                            None => continue,
+                        };
+                        if indel_rates.is_none() {
+                            let w = site.seq_window;
+                            indel_rates = Some(p.rates(&w[0..w.len() - 1]) // 01[2]34 -> 01[]23
+                                .map_err(|e| {
+                                    error::SequenceError::new(
+                                        seq_annotation.name.clone(),
+                                        "Bad sequence (for indel split)",
+                                        Some(Box::new(e)),
+                                    )
+                                })?);
+                        }
+                        let rates = indel_rates.as_ref().expect("set above");
+                        if m.alteration == Alteration::InFrameIndel {
+                            rates.inframe
+                        } else {
+                            rates.outframe
+                        }
+                    }
+                };
+                result.push(MutationEvent {
+                    mutation_type: m.mutation_type,
+                    probability,
                 });
             }
-        }
-    }
+            Ok(())
+        },
+    )?;
     Ok(result)
 }
-
-
-pub fn print_possible_mutations_pos(
-    seq: &str,
-    seq_annotation: &SeqAnnotation,
-    include_intronic : bool,
-    include_unknown : bool,
-    filter_plof : bool,
-) {
-    let seq_flanking_length = 4;
-    let window_length = 1 + 2 * seq_flanking_length;
-    let sequence_genomic_start_position = seq_annotation.range.start;
-    let classifier = PointMutationClassifier::new(&seq_annotation, seq_flanking_length);
-    let introns = seq_annotation.get_introns();
-    let mut introns_iter = introns.iter();
-    let mut cds_iter = seq_annotation.coding_sequences.iter();
-
-    let mut current_intron: Option<Interval> = introns_iter.next().copied();
-    let mut current_cds: Option<CDS> = cds_iter.next().copied();
-    //for ( i, seq_window ) in seq.as_bytes().windows( window_length ).enumerate() {
-    for (i, seq_window) in SeqWindowSlider::new(seq, window_length)
-        .into_iter()
-        .enumerate()
-    {
-        let genomic_position = sequence_genomic_start_position + i;
-        let seq_window_vec: Vec<char> = seq_window.chars().collect();
-        let ref_base: Base = seq_window_vec[seq_flanking_length].into();
-
-        let overlapping_intron = {
-            loop {
-                if let Some(intron) = current_intron {
-                    if genomic_position < intron.start {
-                        break None; // still has some way to go to the next intron
-                    } else if genomic_position < intron.stop {
-                        break Some(intron); // yay, we are inside the current intron!
-                    } else {
-                        current_intron = introns_iter.next().copied();
-                    }
-                } else {
-                    break None; // iterator is exhausted
-                }
-            }
-        };
-
-        let overlapping_cds = {
-            loop {
-                if let Some(cds) = &current_cds {
-                    if genomic_position < cds.range.start {
-                        break None;
-                    } else if genomic_position < cds.range.stop {
-                        break Some(cds); // yay, we are inside the current cds!
-                    } else {
-                        current_cds = cds_iter.next().copied();
-                    }
-                } else {
-                    break None; // iterator is exhausted
-                }
-            }
-        };
-
-        let mut mutation_type = classifier.classify_by_position(
-            genomic_position,
-            &seq_window_vec,
-            &overlapping_intron, // may be none
-        );
-
-        for other_nuc in &[Base::A, Base::C, Base::G, Base::T] {
-            if *other_nuc == ref_base {
-                // NOP
-            } else {
-                if let Some(cds) = overlapping_cds {
-                    // if we are in a coding region we need to do additional classifications
-                    mutation_type = classifier.classify_coding_mutation(
-                        genomic_position,
-                        &seq_window_vec,
-                        other_nuc.name(),
-                        &cds,
-                        filter_plof,
-                    )
-                } // else just recycle the mutation class
-                if mutation_type == MutationType::Intronic && !include_intronic {
-                    continue;
-                }
-                if mutation_type == MutationType::Unknown && !include_unknown {
-                    continue;
-                }
-                println!("{}\t{}\t{:?}\t{:?}\t{}\t{:?}\t{}", seq_annotation.chr, genomic_position +1 , ref_base, other_nuc, seq_annotation.name, mutation_type, seq_window)
-            }
-        }
-
-        // we don't care about intronic indels because most of them don't matter
-        if overlapping_cds.is_some() && overlapping_cds.expect("some").range.start < genomic_position { // needs to be greater, because of anchor base
-  
-            println!("{}\t{}\t{:?}\t{}\t{}\t{:?}\t{}", seq_annotation.chr, genomic_position +1 , ref_base, ref_base.name().to_string() + "NNN", seq_annotation.name, MutationType::InFrameIndel, seq_window);
-
-            if filter_plof {
-                match seq_annotation.strand {
-                    Strand::Plus => {
-                        if genomic_position >= seq_annotation.get_end_minus50() {
-                            continue;
-                        }  
-                    },      
-                    Strand::Minus => {
-                        if genomic_position <= seq_annotation.get_end_minus50() {
-                            continue;
-                        } 
-                    },
-                }
-            }
-            println!("{}\t{}\t{:?}\t{}\t{}\t{:?}\t{}", seq_annotation.chr, genomic_position +1 , ref_base, ref_base.name().to_string() + "N", seq_annotation.name, MutationType::FrameshiftIndel, seq_window);
-            //println!("{} {:?} {:?} {:?} {:?}", genomic_position +1 , ref_base, ref_base + "N", MutationType::FrameshiftIndel, seq_window);
-        }
-    }
-    //Ok(())
-}
-
 
 pub fn expected_number_of_mutations(
     possible_mutations: &[MutationEvent],
