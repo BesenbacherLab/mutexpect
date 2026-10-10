@@ -284,9 +284,9 @@ impl<'a> PointMutationClassifier<'a> {
                 //let pos_of_codon_start = middle_index + relative_frame;
                 let codon_range = match relative_frame {
                     //                                         v--- because end is eclusive
-                    0 => (middle_index - 2..middle_index + 0 + 1),
-                    1 => (middle_index - 1..middle_index + 1 + 1),
-                    2 => (middle_index - 0..middle_index + 2 + 1),
+                    0 => middle_index - 2..middle_index + 0 + 1,
+                    1 => middle_index - 1..middle_index + 1 + 1,
+                    2 => middle_index - 0..middle_index + 2 + 1,
                     _ => panic!("Modulo arithmethic is broken"),
                 };
                 for pos in codon_range.rev() {
