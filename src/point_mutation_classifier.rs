@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::amino_acid::{translate, AminoAcid};
-use crate::cds::CDS;
+use crate::cds::{Phase, CDS};
 use crate::interval::Interval;
 use crate::sequence_annotation::{SeqAnnotation, Strand};
 use crate::MutationType;
@@ -57,9 +57,8 @@ impl<'a> PointMutationClassifier<'a> {
             } else {
                 MutationType::Intronic
             }
-        } else if self.disrupts_start_codon(genomic_position, seq) {
-            MutationType::StartCodon
         } else {
+            // Start codons are inside the CDS, see `classify_coding_mutation`.
             MutationType::Unknown
         }
     }
@@ -134,52 +133,23 @@ impl<'a> PointMutationClassifier<'a> {
         }
     }
 
-    /// Check if a mutation at this position would disrupt the first codon
-    ///
-    /// Parameters:
-    ///   genomic_position: The position on the chromosome
-    fn disrupts_start_codon(&self, genomic_position: usize, _sequence: &[char]) -> bool {
+    /// Returns `true` if `genomic_position` is in the first codon of the
+    /// transcript's coding sequence: the first three bases at the 5' end of the
+    /// first CDS (the lowest CDS on the plus strand, the highest on the minus
+    /// strand), if that CDS has phase 0 and is at least three bases long.
+    fn in_first_codon(&self, genomic_position: usize, cds: &CDS) -> bool {
         let gene = self.gene_info;
-        match gene.strand {
-            Strand::Plus => {
-                if let Some(cds) = gene.coding_sequences.first() {
-                    // the first CDS usually starts with the start codon
-                    if let Some(distance_to_start_codon) =
-                        genomic_position.checked_sub(cds.range.start)
-                    {
-                        /* //too much output for now
-                        if distance_to_start_codon == 0 { // then we do a sanity check
-                            let flanking: usize = _sequence.len() / 2;
-                            if _sequence[ flanking .. flanking + 3 ] !=  [ 'A', 'T', 'G' ] {
-                                eprintln!( "[WARNING] Lowest CDS on the + strand does not have a proper start codon. This can be correct for some genes" );
-                            }
-                        }
-                        */
-                        return distance_to_start_codon < 3; // usize is always >= 0
-                    }
-                }
-            }
-            Strand::Minus => {
-                if let Some(cds) = gene.coding_sequences.last() {
-                    // the last CDS must end with a reverse start codon
-                    if let Some(distance_to_start_codon) =
-                        cds.range.stop.checked_sub(genomic_position)
-                    {
-                        /* //too much output for now
-                        if distance_to_start_codon == 3 {
-                            let flanking: usize = _sequence.len() / 2;
-                            if _sequence[ flanking .. flanking + 3 ] != [ 'C', 'A', 'T' ] {
-                                eprintln!( "[WARNING] Highest CDS on the - strand does not have a proper start codon. This can be correct for some genes" );
-                            }
-                        }
-                        */
-                        return 0 < distance_to_start_codon && distance_to_start_codon < 4;
-                        // keep in mind that the .stop is exclusive
-                    }
-                }
-            }
+        let first = match gene.strand {
+            Strand::Plus => gene.coding_sequences.first(),
+            Strand::Minus => gene.coding_sequences.last(),
+        };
+        if first != Some(cds) || cds.phase != Phase::Zero || cds.range.len() < 3 {
+            return false;
         }
-        false
+        match gene.strand {
+            Strand::Plus => genomic_position < cds.range.start + 3,
+            Strand::Minus => genomic_position >= cds.range.stop - 3,
+        }
     }
 
     pub fn classify_coding_mutation(
@@ -296,6 +266,11 @@ impl<'a> PointMutationClassifier<'a> {
                 (nucs, relative_frame)
             }
         };
+
+        // Loss of the start codon: any change of an ATG in the first codon.
+        if old_codon == "ATG" && self.in_first_codon(genomic_position, cds) {
+            return MutationType::StartCodon;
+        }
 
         let new_codon = {
             let mut codon = String::with_capacity(3);

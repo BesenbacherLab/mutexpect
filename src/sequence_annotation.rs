@@ -87,6 +87,9 @@ impl SeqAnnotation {
         result
     }
 
+    /// Threshold for the "last 50 coding bases" of the transcript (used by
+    /// `--filter-plof`): on the plus strand these are the coding positions
+    /// `>= get_end_minus50()`, on the minus strand those `<= get_end_minus50()`.
     pub fn get_end_minus50(&self) -> usize {
         let mut remain  = 50;
         match self.strand {
@@ -105,8 +108,9 @@ impl SeqAnnotation {
             Strand::Minus => {
                 for cds in self.coding_sequences.iter() {
                     //println!("minus {:?}", cds.range.stop - cds.range.start);
-                    if cds.range.stop - cds.range.start > remain {
-                        return cds.range.start + remain;
+                    if cds.range.stop - cds.range.start >= remain {
+                        // positions start ..= start + remain - 1 (remain >= 1 here)
+                        return cds.range.start + remain - 1;
                         //println!("end: {:?}", cds.range.start + remain)
                     } else {
                         remain = remain - (cds.range.stop - cds.range.start)
