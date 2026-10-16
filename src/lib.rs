@@ -197,6 +197,34 @@ pub fn possible_mutations(
     include_unknown : bool,
     filter_plof : bool,
 ) -> Result<Vec<MutationEvent>, MutexpectError> {
+    Ok(possible_mutations_by_position(
+        seq,
+        seq_annotation,
+        point_mutation_probabilities,
+        indel_probabilities,
+        drop_nan,
+        include_intronic,
+        include_unknown,
+        filter_plof,
+    )?
+    .into_iter()
+    .map(|(_, event)| event)
+    .collect())
+}
+
+/// Like [`possible_mutations`], with the 0-based genomic position of each
+/// event: the mutated base for point mutations, and the base after the
+/// insertion/deletion point for indels (see [`for_each_possible_mutation`]).
+pub fn possible_mutations_by_position(
+    seq: &str,
+    seq_annotation: &SeqAnnotation,
+    point_mutation_probabilities: &PaPaPred,
+    indel_probabilities: &Option<PaPaPredIndel>,
+    drop_nan: bool,
+    include_intronic : bool,
+    include_unknown : bool,
+    filter_plof : bool,
+) -> Result<Vec<(usize, MutationEvent)>, MutexpectError> {
     let mut result = Vec::new();
     let seq_flanking_length = point_mutation_probabilities.kmer_size() / 2; // this should round down
     for_each_possible_mutation(
@@ -252,10 +280,13 @@ pub fn possible_mutations(
                         }
                     }
                 };
-                result.push(MutationEvent {
-                    mutation_type: m.mutation_type,
-                    probability,
-                });
+                result.push((
+                    site.genomic_position,
+                    MutationEvent {
+                        mutation_type: m.mutation_type,
+                        probability,
+                    },
+                ));
             }
             Ok(())
         },
